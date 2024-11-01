@@ -310,3 +310,4 @@ fagavg精度最高。
 ### V27服务器，/home/yang/Desktop/code/FL_longtail 修噶为file_names = ['ImageNet_LT_train.txt', 'ImageNet_LT_test.txt', 'ImageNet_LT_val.txt']全部使用
 
 ## 无用的数据修改与网络修改，8-6开始测试换不打乱数据集，并且添加更多的mu数据
+http://154.17.26.12:51860/api/v1/client/subscribe?token=30c8e358eca5d266f61fc677802f0505
