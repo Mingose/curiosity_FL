@@ -10,6 +10,12 @@ import math
 from .Warmup import WarmupMultiStepLR
 
 from utils_old.args import *
+
+from collections import Counter
+
+# # 在初始化优化器时设置滑动窗口大小
+# from collections import deque
+
 args = parse_args()
 
 class ProxSGD(Optimizer):
@@ -138,470 +144,477 @@ class ProxSGD(Optimizer):
                 param_state['initial_params'] = torch.clone(initial_param.data)
 
 
-class LMAdam(Optimizer):
-    r"""Implements Adam algorithm.
 
-    It has been proposed in `Adam: A Method for Stochastic Optimization`_.
-
-    Arguments:
-        params (iterable): iterable of parameters to optimize or dicts defining
-            parameter groups
-        lr (float, optional): learning rate (default: 1e-3)
-        betas (Tuple[float, float], optional): coefficients used for computing
-            running averages of gradient and its square (default: (0.9, 0.999))
-        eps (float, optional): term added to the denominator to improve
-            numerical stability (default: 1e-8)
-        weight_decay (float, optional): weight decay (L2 penalty) (default: 0)
-        amsgrad (boolean, optional): whether to use the AMSGrad variant of this
-            algorithm from the paper `On the Convergence of Adam and Beyond`_
-            (default: False)
-
-    .. _Adam\: A Method for Stochastic Optimization:
-        https://arxiv.org/abs/1412.6980
-    .. _On the Convergence of Adam and Beyond:
-        https://openreview.net/forum?id=ryQu7f-RZ
-    """
-
-    def __init__(self, params, lr=1e-3, betas=(0.9, 0.999), eps=1e-8,
-                 weight_decay=0, curi=0.01,amsgrad=False):
-        if not 0.0 <= lr:
-            raise ValueError("Invalid learning rate: {}".format(lr))
-        if not 0.0 <= eps:
-            raise ValueError("Invalid epsilon value: {}".format(eps))
-        if not 0.0 <= betas[0] < 1.0:
-            raise ValueError("Invalid beta parameter at index 0: {}".format(betas[0]))
-        if not 0.0 <= betas[1] < 1.0:
-            raise ValueError("Invalid beta parameter at index 1: {}".format(betas[1]))
-        if not 0.0 <= weight_decay:
-            raise ValueError("Invalid weight_decay value: {}".format(weight_decay))
-        defaults = dict(lr=lr, betas=betas, eps=eps,
-                        weight_decay=weight_decay, curi=curi, amsgrad=amsgrad)
-        super(LMAdam, self).__init__(params, defaults)
-
-    def __setstate__(self, state):
-        super(LMAdam, self).__setstate__(state)
-        for group in self.param_groups:
-            group.setdefault('amsgrad', False)
-
-
-    @torch.no_grad()
-    def step(self,closure=None):
-        """Performs a single optimization step.
-
-        Arguments:
-            closure (callable, optional): A closure that reevaluates the model
-                and returns the loss.
-        """
-        loss = None
-        if closure is not None:
-            with torch.enable_grad():
-                loss = closure()
-
-        nn = 0 # 计数
-
-        for group in self.param_groups:
-            for p in group['params']:
-                if p.grad is None:
-                    continue
-                grad = p.grad
-                if grad.is_sparse:
-                    raise RuntimeError('Adam does not support sparse gradients, please consider SparseAdam instead')
-                amsgrad = group['amsgrad']
-
-                state = self.state[p]
-
-                rare = state['y_sample_size_min']
-
-                # nn = nn + 1
-                # if nn ==1:  # 控制 y_sample_size_min_param 打印输出
-                #     # print("y_sample_size_min_param:{}".format(state['y_sample_size_min']))
-
-                # print("state",state)
-
-                # State initialization
-                if len(state) == 1:                  # 0 改为 1 ，在 total_y_value 多了一个字典索引 'out_cosine_similarity'、 'y_classes_gruops'
-                    state['step'] = 0
-                    # Exponential moving average of gradient values
-                    state['exp_avg'] = torch.zeros_like(p, memory_format=torch.preserve_format)  # size(c，n , h,w)
-                    # Exponential moving average of squared gradient values
-                    state['exp_avg_sq'] = torch.zeros_like(p, memory_format=torch.preserve_format) # size(c，n , h,w)
-                    if amsgrad:
-                        # Maintains max of all exp. moving avg. of sq. grad. values
-                        state['max_exp_avg_sq'] = torch.zeros_like(p, memory_format=torch.preserve_format)
-
-                exp_avg, exp_avg_sq = state['exp_avg'], state['exp_avg_sq']
-
-                #print("state_again",state)
-
-                # print("cosine_similarity_value:{}".format(state['out_cosine_similarity']))
-
-                # cosine_similarity_value = state['out_cosine_similarity']  # 获取余弦相似度的值
-
-                
-                # if cosine_similarity_value is None:
-                #     raise ValueError("cosine_similarity_value is empty")
-               
-                if amsgrad:
-                    max_exp_avg_sq = state['max_exp_avg_sq']
-                
-                beta1, beta2 = group['betas']
-                curi = group['curi']
-
-                state['step'] += 1
-                bias_correction1 = 1 - beta1 ** state['step']
-                bias_correction2 = 1 - beta2 ** state['step']
-
-                if group['weight_decay'] != 0:
-                    grad = grad.add(p, alpha=group['weight_decay'])
-
-                # Decay the first and second moment running average coefficient
-                exp_avg.mul_(beta1).add_(grad, alpha=1 - beta1).add_(grad.mul_(curi/rare))                # 一阶动量   
-                exp_avg_sq.mul_(beta2).addcmul_(grad, grad, value=1 - beta2)   # 二阶动量
-                
-                # 一、二阶动量都除以 原始y和预测y 的相关性
-
-               # print("exp_avg:{},exp_avg_sq:{},loss_:{}".format(exp_avg.shape,exp_avg_sq.shape,loss_vc.shape))
-                
-                # exp_avg = torch.div(exp_avg,cosine_similarity_value)     # 一阶动量除去  cosine_similarity_value
-                # exp_avg_sq = torch.div(exp_avg_sq,cosine_similarity_value)
-
-                # print("cosine_similarity_value{}".format(cosine_similarity_value))
-
-                if amsgrad:
-                    # Maintains the maximum of all 2nd moment running avg. till now
-                    torch.max(max_exp_avg_sq, exp_avg_sq, out=max_exp_avg_sq)  
-                    # Use the max. for normalizing running avg. of gradient
-                    denom = (max_exp_avg_sq.sqrt() / math.sqrt(bias_correction2)).add_(group['eps'])
-                else:
-                    denom = (exp_avg_sq.sqrt() / math.sqrt(bias_correction2)).add_(group['eps'])
-
-                step_size = group['lr'] / bias_correction1
-
-                p.addcdiv_(exp_avg, denom, value=-step_size)
-
-        return loss
-
-    def total_y_value(self, y):
-        y_classes_gruops = dict()
-        now_y_classes = dict()
-
-        y_classes_param_total = list()
-        now_y_classes_param = list()
-
-        if len(y) == 0:
-            raise ValueError("optimizer got an empty parameter list")
-
-        list_y = [i for i in y]  # 将 dtype 为 tensor 的转为 numpy 类型
-
-        # print("list_y:".format([i for i in list(list_y)]))
-          # 构造一个字典
-        y_classes_gruops_list={'y_classes_gruops':{}}
-        # 将 'y_classes_gruops' 字典置在 网络接结构中的最顶层，目的减少 ‘y_classes_gruops'的次数
-        # y_classes_gruops_flage = True
-        for param_group in self.param_groups:
-
-            #print("defore_param_group:{}".format(param_group))
-            if isinstance(param_group,dict):
-                if 'y_classes_gruops' in param_group.keys():
-                    y_classes_gruops = param_group['y_classes_gruops'] # 获取历史batch y 类别和统计数值
-
-          # 获取 在 list_y 内出现的类别，并统计
-        for y_name in list_y:
-            flag = True
-
-            for key in now_y_classes.keys():
-                
-                if y_name == key:
-                    now_y_classes[key] = now_y_classes[key] + 1
-                    flag = False
-                    break
-            if flag:
-                now_y_classes[y_name] = 1
-
-        # 获取 在 list_y 内出现的类别，并和历史出现的进行统计
-        for y_name in list_y:
-            flag = True
-            for key in y_classes_gruops.keys():       
-                if y_name == key:
-                    y_classes_gruops[key] = y_classes_gruops[key] + 1
-                    flag = False
-                    break
-            if flag:
-                y_classes_gruops[y_name] = 1
-
-
-        # print("y_classes_gruops:{},now_y_classes:{}".format(y_classes_gruops, now_y_classes))
-
-        # now_y_classes_param 获取  在这个 batc size 内含有 y 类别的出现数量，仅含在这个 batch size 内
-        #  y_classes_param_total 获取 在这个 batch size 内有含有 y 类别的出现数量 ，含这个 batch size 和之前的
-
-        for y_name in now_y_classes.keys():
-
-            for key in y_classes_gruops.keys():
-                if y_name == key:
-                    now_y_classes_param.append(y_classes_gruops[key])  #将这一个batch y 类别历史统计的大小存入
-                    break
-
-        for y_name in y_classes_gruops.keys():
-
-            y_classes_param_total.append(y_classes_gruops[y_name]) #将所有的类别统计的大小存入
-
-
-        y_classes_param_total = torch.tensor(y_classes_param_total,
-                                             dtype=torch.float)  # 将 dtype: numpy 转变为 tensor float 类型
-        now_y_classes_param = torch.tensor(now_y_classes_param, dtype=torch.float)
-
-        y_classes_sum = y_classes_param_total.sum()  # 求类别样本和
-        # print("y_classes_sum:{}".format(y_classes_sum))
-
-        y_classes_sample_size = now_y_classes_param.div(y_classes_sum)
-
-        # print("y_classes_sample_size:{}".format(y_classes_sample_size))
-        # 计算这一个batch类别样本占比的平均值
-
-        y_sample_size_min = y_classes_sample_size.min(0)
-
-        # print("y_sample_size_min:{}".format(y_sample_size_min[0]))
-
-        for param_group in self.param_groups:
-            for param in param_group['params']:
-                param_state = self.state[param]
-                param_state['y_sample_size_min'] = torch.clone(y_sample_size_min[0].data)  # 将当前batch y 类别的最小稀有度的值加入到 模型的参数里
-              
-        for param_group in self.param_groups:
-
-            if isinstance(param_group,dict):
-                # if 'y_classes_gruops' in param_group.keys():
-                param_group['y_classes_gruops'] = y_classes_gruops
 
 
 class LMSGD(Optimizer):
-    r"""
-      Args:
-        params (iterable): iterable of parameters to optimize or dicts defining
-            parameter groups
-        lr (float): learning rate
-        momentum (float, optional): momentum factor (default: 0)
-        weight_decay (float, optional): weight decay (L2 penalty) (default: 0)
-        dampening (float, optional): dampening for momentum (default: 0)
-        nesterov (bool, optional): enables Nesterov momentum (default: False)
-        maximize (bool, optional): maximize the params based on the objective, instead of
-            minimizing (default: False)
-        foreach (bool, optional): whether foreach implementation of optimizer
-            is used (default: None)
-
-    Example:
-        >>> optimizer = torch.optim.SGD(model.parameters(), lr=0.1, momentum=0.9)
-        >>> optimizer.zero_grad()
-        >>> loss_fn(model(input), target).backward()
-        >>> optimizer.step()
-
-    __ http://www.cs.toronto.edu/%7Ehinton/absps/momentum.pdf
-
-    .. note::
-        The implementation of SGD with Momentum/Nesterov subtly differs from
-        Sutskever et. al. and implementations in some other frameworks.
-
-        Considering the specific case of Momentum, the update can be written as
-
-        .. math::
-            \begin{aligned}
-                v_{t+1} & = \mu * v_{t} + g_{t+1}, \\
-                p_{t+1} & = p_{t} - \text{lr} * v_{t+1},
-            \end{aligned}
-
-        where :math:`p`, :math:`g`, :math:`v` and :math:`\mu` denote the
-        parameters, gradient, velocity, and momentum respectively.
-
-        This is in contrast to Sutskever et. al. and
-        other frameworks which employ an update of the form
-
-        .. math::
-            \begin{aligned}
-                v_{t+1} & = \mu * v_{t} + \text{lr} * g_{t+1}, \\
-                p_{t+1} & = p_{t} - v_{t+1}.
-            \end{aligned}
-
-        The Nesterov version is analogously modified.
-    """
-
-    def __init__(self, params, lr=required, momentum=0, dampening=0,weight_decay=0,curi=0, nesterov=False):
-
-        if lr is not required and lr < 0.0:
-            raise ValueError("Invalid learning rate: {}".format(lr))
+    def __init__(self, params, lr=0.001, momentum=0, dampening=0, weight_decay=0, curi=0, nesterov=False):
+        """
+        LMSGD 优化器，支持按需计算 total_y_value。
+        """
+        if lr < 0.0:
+            raise ValueError(f"Invalid learning rate: {lr}")
         if momentum < 0.0:
-            raise ValueError("Invalid momentum value: {}".format(momentum))
+            raise ValueError(f"Invalid momentum value: {momentum}")
         if weight_decay < 0.0:
-            raise ValueError("Invalid weight_decay value: {}".format(weight_decay))
+            raise ValueError(f"Invalid weight_decay value: {weight_decay}")
 
         defaults = dict(lr=lr, momentum=momentum, dampening=dampening,
-                        weight_decay=weight_decay, curi=curi,nesterov=nesterov)
-        if nesterov and (momentum <= 0 or dampening != 0):
-            raise ValueError("Nesterov momentum requires a momentum and zero dampening")
+                        weight_decay=weight_decay, curi=curi, nesterov=nesterov, use_rare=False)
+        super(LMSGD, self).__init__(params, defaults)
+        self.current_epoch = 0
+
+    def __setstate__(self, state):
+        super(LMSGD, self).__setstate__(state)
+        for group in self.param_groups:
+            group.setdefault('nesterov', False)
+            group.setdefault('use_rare', False)
+
+    def update_epoch(self, epoch):
+        """更新当前的 epoch 值"""
+        self.current_epoch = epoch
+
+    @torch.no_grad()
+    def step(self, closure=None, y=None):
+        """
+        执行一次优化更新。
+        如果某些参数组需要计算稀有度得分（use_rare=True），则传递 y（类别标签）到 total_y_value。
+        """
+        loss = closure() if closure is not None else None
+
+        # 仅在需要计算稀有度得分时调用 total_y_value
+        if y is not None and any(group['use_rare'] for group in self.param_groups):
+            self.total_y_value(y)
+
+        for group in self.param_groups:
+            weight_decay = group['weight_decay']
+            momentum = group['momentum']
+            lr = group['lr']
+            dampening = group['dampening']
+            nesterov = group['nesterov']
+            curi = group['curi']
+            use_rare = group['use_rare']
+
+            for p in group['params']:
+                if p.grad is None:
+                    continue
+                d_p = p.grad
+
+                state = self.state[p]
+
+                # 如果 use_rare 为 True，则获取稀有度得分
+                rare_lr, rare_momentum = 0, 0
+                if use_rare:
+                    y_score_all = state.get('y_score_all', torch.tensor(1.0, device=d_p.device))
+                    # print(y_score_all)
+                    rare = state.get('y_sample_size_min', torch.tensor(1.0, device=d_p.device))
+
+                    # 计算 rare_lr 和 rare_momentum
+                    rare_lr = torch.tanh(1 / rare) * curi * (0.1 ** (self.current_epoch // 20))
+                    rare_momentum = 1 * y_score_all * (0.1 ** (self.current_epoch // 10))
+
+                # 初始化或更新 momentum buffer
+                if 'momentum_buffer' not in state:
+                    buf = state['momentum_buffer'] = torch.clone(d_p).detach()
+                else:
+                    buf = state['momentum_buffer']
+                    if use_rare :#and y_score_all <= 0.69:
+                        buf.mul_(momentum * (1 - rare_momentum)).add_(d_p, alpha=(1 - dampening))
+                    else:
+                        buf.mul_(momentum).add_(d_p, alpha=1 - dampening)
+
+                if weight_decay != 0:
+                    d_p = d_p.add(p, alpha=weight_decay)
+
+                if momentum != 0:
+                    if nesterov:
+                        d_p = d_p.add(buf, alpha=momentum)
+                    else:
+                        d_p = buf
+
+                # 更新参数
+                p.add_(d_p, alpha=-lr * (rare_lr + 1))
+
+        return loss
+
+    def total_y_value(self, y, max_score=1.0):
+        """
+        仅在参数组的 use_rare 为 True 时计算稀有度得分。
+        """
+        if len(y) == 0:
+            raise ValueError("Optimizer got an empty parameter list")
+
+        # 将 y 转换为列表并统计当前 batch 中的类别出现次数
+        list_y = y.tolist()
+        y_counts = Counter(list_y)
+
+        for param_group in self.param_groups:
+            if not param_group.get('use_rare', False):
+                continue
+
+            if 'cumulative_y_classes' not in param_group:
+                param_group['cumulative_y_classes'] = Counter()
+
+            cumulative_y_classes = param_group['cumulative_y_classes']
+            cumulative_y_classes.update(y_counts)
+
+            rare_class_count_batch = min(y_counts.values(), default=0)
+            common_class_count_batch = max(y_counts.values(), default=1)
+
+            y_sample_size_min = rare_class_count_batch / common_class_count_batch
+
+            num_classes = len(cumulative_y_classes)
+            P_ideal = 1.0 / num_classes if num_classes > 0 else 0
+
+            total_count_batch = sum(y_counts.values())
+            P_actual = torch.zeros(num_classes, device='cuda')
+            for cls, count in y_counts.items():
+                if cls < num_classes:
+                    P_actual[cls] = count / total_count_batch
+
+            TVD = 0.5 * torch.sum(torch.abs(P_actual - P_ideal))
+
+            y_score_all = max_score * (1 - TVD)
+            score_tensor = torch.tensor(y_score_all, device='cuda')
+
+            for param in param_group['params']:
+                param_state = self.state[param]
+                param_state['y_sample_size_min'] = torch.tensor(y_sample_size_min, device='cuda')
+                param_state['y_score_all'] = score_tensor.clone().detach()
+
+        return score_tensor
+
+
+
+
+
+class LMSGD2(Optimizer):
+    def __init__(self, params, lr=required, momentum=0, dampening=0, weight_decay=0, curi=0, nesterov=False):
+        if lr is not required and lr < 0.0:
+            raise ValueError(f"Invalid learning rate: {lr}")
+        if momentum < 0.0:
+            raise ValueError(f"Invalid momentum value: {momentum}")
+        if weight_decay < 0.0:
+            raise ValueError(f"Invalid weight_decay value: {weight_decay}")
+
+        defaults = dict(lr=lr, momentum=momentum, dampening=dampening,
+                        weight_decay=weight_decay, curi=curi, nesterov=nesterov)
         super(LMSGD, self).__init__(params, defaults)
 
     def __setstate__(self, state):
-        super().__setstate__(state)
+        super(LMSGD, self).__setstate__(state)
         for group in self.param_groups:
             group.setdefault('nesterov', False)
+    
+    def update_epoch(self, epoch):
+        """更新当前的 epoch 值"""
+        self.current_epoch = epoch
+    
 
     @torch.no_grad()
     def step(self, closure=None):
-        """Performs a single optimization step.
+        """Performs a single optimization step."""
+        loss = closure() if closure is not None else None
 
-        Args:
-            closure (callable, optional): A closure that reevaluates the model
-                and returns the loss.
-        """
-        loss = None
-        if closure is not None:
-            with torch.enable_grad():
-                loss = closure()
+        # if self.current_epoch == 1:
+        #     for group in self.param_groups:
+        #         for p in group['params']:
+        #             # 计算稀有度得分，仅在第一 epoch 调用
+        #             if p.grad is not None:
+        #                 self.total_y_value(p.grad)
 
         for group in self.param_groups:
-
-            weight_decay=group['weight_decay']
-            momentum=group['momentum']
-            lr=group['lr']
-            dampening=group['dampening']
-            nesterov=group['nesterov']
-            curi=group['curi']
-            
-
-           
+            weight_decay = group['weight_decay']
+            momentum = group['momentum']
+            lr = group['lr']
+            dampening = group['dampening']
+            nesterov = group['nesterov']
+            curi = group['curi']
 
             for p in group['params']:
-                if p.grad is not None:
-                    d_p = p.grad
+                if p.grad is None:
+                    continue
+                d_p = p.grad
 
-                    state = self.state[p]
-                    rare = state['y_sample_size_min']
-                    rare_momentum = math.atan(1/rare)*curi
-                    # rare_momentum = math.atan(curi/rare)
+                state = self.state[p]
+
+                # 获取稀有度得分
+                y_score_all = state.get('y_score_all', torch.tensor(1.0, device=d_p.device))  # Default score if not set
+                rare = state['y_sample_size_min']   #用于计算学习率
+                
+                # print(y_score_all,rare)
+                # rare_momentum = torch.log(1 + 10 * (0.9 - torch.tensor(y_score_all))) * curi
+                # rare_momentum = curi * torch.log(5 * ((torch.tensor(y_score_all) - 0.4) /0.4 + 0.000001))
+                # 调整后的 rare_momentum 计算公式
+                # rare_momentum = 1*curi *(y_score_all) * torch.exp(torch.log1p(torch.tensor( -self.current_epoch, device="cuda"))) #对数减小rare的影响
+                rare_momentum = 1 * y_score_all * (0.1 ** (self.current_epoch // 10))    #分多阶段减小,curi 太小导致1-curi_mu太大
+
+
+                # rare_momentum = torch.clamp(0.1*y_score_all**curi , min=0.00001, max=0.99)    #y_score_all 与curi无关时
+                rare_lr = torch.tanh(1/rare)*curi* (0.1 ** (self.current_epoch // 20))
+
+
+                # 初始化或更新 momentum buffer
+                if 'momentum_buffer' not in state:
+                    buf = state['momentum_buffer'] = torch.clone(d_p).detach()
                     
-                    if 'momentum_buffer' not in state:
-                        momentum_buffer = None
+                else:
+                    buf = state['momentum_buffer']
+                    # print('momentu:',momentum)
+                    # momentum_new = max(0.6, momentum - rare_momentum)
+                    if y_score_all<=0.69 :#and self.current_epoch >=90:# & self.current_epoch >1:
+                        # buf.mul_(momentum).add_(d_p, alpha=(1 - dampening) * (1 + rare_momentum)) # 增加当前的
+                        buf.mul_(momentum* (1 - rare_momentum)).add_(d_p, alpha=(1 - dampening))
                     else:
-                        momentum_buffer = state['momentum_buffer']
+                        buf.mul_(momentum).add_(d_p, alpha=1 - dampening)
+                    # print('momentum_new:',momentum_new)
+                if weight_decay != 0:
+                    d_p = d_p.add(p, alpha=weight_decay)
 
-                    if weight_decay != 0:
-                        d_p = d_p.add(p, alpha=weight_decay)
-
-                    if momentum != 0:
-                        buf = momentum_buffer
-
-                        if buf is None:
-                            buf = torch.clone(d_p).detach()
-                            state['momentum_buffer']= buf
-                        else:
-                            buf.mul_(momentum).add_(d_p, alpha=1 - dampening)#.add_(d_p*(rare_momentum),alpha=1-dampening)
-
-                        if nesterov:
-                            d_p = d_p.add(buf, alpha=momentum)
-                        else:
-                            d_p = buf
-
-                    # alpha = lr if maximize else -lr
-                    # p.data.add_(d_p, alpha=-lr)
-                    if rare_momentum == 0:
-                        p.data.add_(d_p, alpha=-lr)
+                if momentum != 0:
+                    if nesterov:
+                        d_p = d_p.add(buf, alpha=momentum)
                     else:
-                        p.data.add_(d_p, alpha=-lr*rare_momentum)
-        
+                        d_p = buf
+
+                # 更新参数
+                p.add_(d_p, alpha=-lr*(rare_lr+1))
+
         return loss
 
-    def total_y_value(self, y):
-        y_classes_gruops = dict()
-        now_y_classes = dict()
 
-        y_classes_param_total = list()
-        now_y_classes_param = list()
 
+    def total_y_value(self, y, max_score=1.0):
+        """
+        计算当前批次数据的稀有度得分。
+        - y_sample_size_min: 当前批次最稀有类别的样本数与最常见类别的样本数之比。
+        - y_score_all: 基于总变差距离（TVD）计算当前批次与理想平衡分布的相似度得分。
+        
+        Args:
+            y (Tensor): 当前批次的类别标签。
+            max_score (float): 用于控制得分上限。
+            
+        Returns:
+            score_tensor (Tensor): 当前批次的相似度得分 y_score_all，范围在 [0, max_score] 之间。
+        """
         if len(y) == 0:
-            raise ValueError("optimizer got an empty parameter list")
+            raise ValueError("Optimizer got an empty parameter list")
 
-        list_y = [i for i in y]  # 将 dtype 为 tensor 的转为 numpy 类型
+        # 将 y 转换为列表并统计当前 batch 中的类别出现次数
+        list_y = y.tolist()
+        y_counts = Counter(list_y)
 
-        # print("list_y:".format([i for i in list(list_y)]))
-          # 构造一个字典
-        # y_classes_gruops_list={'y_classes_gruops':{}}
-        # 将 'y_classes_gruops' 字典置在 网络接结构中的最顶层，目的减少 ‘y_classes_gruops'的次数
-        # y_classes_gruops_flage = True
+        # 初始化 cumulative_y_classes 并更新历史分布
         for param_group in self.param_groups:
+            if 'cumulative_y_classes' not in param_group:
+                param_group['cumulative_y_classes'] = Counter()
+            
+            cumulative_y_classes = param_group['cumulative_y_classes']
+            cumulative_y_classes.update(y_counts)  # 更新历史类别分布
 
-            #print("defore_param_group:{}".format(param_group))
-            if isinstance(param_group,dict):
-                if 'y_classes_gruops' in param_group.keys():
-                    y_classes_gruops = param_group['y_classes_gruops'] # 获取历史batch y 类别和统计数值
+            # 获取当前批次最稀有和最常见类别的样本数
+            rare_class_count_batch = min(y_counts.values(), default=0)
+            common_class_count_batch = max(y_counts.values(), default=1)  # 默认为 1 以避免除以 0
 
-          # 获取 在 list_y 内出现的类别，并统计
-        for y_name in list_y:
-            flag = True
+            # 计算 y_sample_size_min
+            y_sample_size_min = rare_class_count_batch / common_class_count_batch
 
-            for key in now_y_classes.keys():
-                
-                if y_name == key:
-                    now_y_classes[key] = now_y_classes[key] + 1
-                    flag = False
-                    break
-            if flag:
-                now_y_classes[y_name] = 1
+            # 获取类别数量 K 和理想平衡分布 P_ideal
+            num_classes = len(cumulative_y_classes)
+            P_ideal = 1.0 / num_classes if num_classes > 0 else 0
 
-        # 获取 在 list_y 内出现的类别，并和历史出现的进行统计
-        for y_name in list_y:
-            flag = True
-            for key in y_classes_gruops.keys():       
-                if y_name == key:
-                    y_classes_gruops[key] = y_classes_gruops[key] + 1
-                    flag = False
-                    break
-            if flag:
-                y_classes_gruops[y_name] = 1
+            # 当前批次的实际分布 P_actual
+            total_count_batch = sum(y_counts.values())
+            P_actual = torch.zeros(num_classes, device='cuda')
+            
+            for cls, count in y_counts.items():
+                if cls < num_classes:
+                    P_actual[cls] = count / total_count_batch
 
+            # 计算总变差距离 TVD
+            TVD = 0.5 * torch.sum(torch.abs(P_actual - P_ideal))
 
-        # print("y_classes_gruops:{},now_y_classes:{}".format(y_classes_gruops, now_y_classes))
-
-        # now_y_classes_param 获取  在这个 batc size 内含有 y 类别的出现数量，仅含在这个 batch size 内
-        #  y_classes_param_total 获取 在这个 batch size 内有含有 y 类别的出现数量 ，含这个 batch size 和之前的
-
-        for y_name in now_y_classes.keys():
-
-            for key in y_classes_gruops.keys():
-                if y_name == key:
-                    now_y_classes_param.append(y_classes_gruops[key])  #将这一个batch y 类别历史统计的大小存入
-                    break
-
-        for y_name in y_classes_gruops.keys():
-
-            y_classes_param_total.append(y_classes_gruops[y_name]) #将所有的类别统计的大小存入
-
-
-        y_classes_param_total = torch.tensor(y_classes_param_total,
-                                             dtype=torch.float)  # 将 dtype: numpy 转变为 tensor float 类型
-        now_y_classes_param = torch.tensor(now_y_classes_param, dtype=torch.float)
-
-        y_classes_sum = y_classes_param_total.sum()  # 求类别样本和
-        # print("y_classes_sum:{}".format(y_classes_sum))
-
-        y_classes_sample_size = now_y_classes_param.div(y_classes_sum)
-
-        # print("y_classes_sample_size:{}".format(y_classes_sample_size))
-        # 计算这一个batch类别样本占比的平均值
-
-        y_sample_size_min = y_classes_sample_size.min(0)
-
-        # print("y_sample_size_min:{}".format(y_sample_size_min[0]))
-
-        for param_group in self.param_groups:
+            # 根据 TVD 计算相似度得分 y_score_all
+            y_score_all = max_score * (1 - TVD)
+            score_tensor = torch.tensor(y_score_all, device='cuda')
+            # print(y_score_all)
+            # 将 y_sample_size_min 和 y_score_all 保存到状态字典中
             for param in param_group['params']:
                 param_state = self.state[param]
-                param_state['y_sample_size_min'] = torch.clone(y_sample_size_min[0].data)  # 将当前batch y 类别的最小稀有度的值加入到 模型的参数里
-              
-        for param_group in self.param_groups:
+                param_state['y_sample_size_min'] = torch.tensor(y_sample_size_min, device='cuda')  # 当前批次稀有度比值
+                param_state['y_score_all'] = score_tensor.clone().detach()  # 基于 TVD 的相似度得分
 
-            if isinstance(param_group,dict):
-                # if 'y_classes_gruops' in param_group.keys():
-                param_group['y_classes_gruops'] = y_classes_gruops
+        return score_tensor
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    ###########################原始的
+    # def total_y_value(self, y):
+    #     if len(y) == 0:
+    #         raise ValueError("optimizer got an empty parameter list")
+        
+    #     # 将 y 转换为 Python 列表并统计类别出现次数
+    #     list_y = [i.item() for i in y]
+    #     y_counts = Counter(list_y)
+
+    #     for param_group in self.param_groups:
+    #         if 'y_classes_gruops' not in param_group:
+    #             param_group['y_classes_gruops'] = Counter()
+    #         y_classes_gruops = param_group['y_classes_gruops']
+            
+    #         # 更新历史统计
+    #         y_classes_gruops.update(y_counts)
+            
+    #         # 当前 batch 的类别样本比率，直接在 GPU 上进行张量操作
+    #         now_y_classes_param = torch.tensor([y_counts[key] for key in y_counts], dtype=torch.float, device='cuda')   #多U训练时，必须指定主U？下降了0.04%
+    #         total_y_classes_param = torch.tensor([y_classes_gruops[key] for key in y_classes_gruops], dtype=torch.float, device='cuda')
+            
+    #         y_classes_sum = total_y_classes_param.sum()  # 类别样本总和
+    #         y_classes_sample_size = now_y_classes_param / y_classes_sum  # 当前 batch 类别样本占比
+            
+    #         y_sample_size_min = y_classes_sample_size.min()#.item()  # 获取最小样本稀有度值
+
+    #         # 将结果保存到 param 的状态字典中
+    #         for param in param_group['params']:
+    #             # self.state[param]['y_sample_size_min'] = torch.tensor(y_sample_size_min, device='cuda')  # 稀有度值放到 主GPU
+    #             self.state[param]['y_sample_size_min'] = y_sample_size_min.clone().detach().to('cuda')  
+    
+    
+    
+    
+    # def total_y_value(self, y):
+    #     if len(y) == 0:
+    #         raise ValueError("optimizer got an empty parameter list")
+        
+    #     # 将 y 转换为 Python 列表并统计类别出现次数
+    #     list_y = [i.item() for i in y]
+    #     y_counts = Counter(list_y)
+
+    #     for param_group in self.param_groups:
+    #         if 'y_classes_gruops' not in param_group:
+    #             param_group['y_classes_gruops'] = Counter()
+    #         y_classes_gruops = param_group['y_classes_gruops']
+            
+    #         # 更新历史统计
+    #         y_classes_gruops.update(y_counts)
+            
+    #         # 当前 batch 的类别样本比率，直接在 GPU 上进行张量操作
+    #         now_y_classes_param = torch.tensor([y_counts[key] for key in y_counts], dtype=torch.float, device='cuda')
+    #         total_y_classes_param = torch.tensor([y_classes_gruops[key] for key in y_classes_gruops], dtype=torch.float, device='cuda')
+            
+    #         y_classes_sum = total_y_classes_param.sum()  # 类别样本总和
+    #         y_classes_sample_size = now_y_classes_param / y_classes_sum  # 当前 batch 类别样本占比
+            
+    #         y_sample_size_min = y_classes_sample_size.min().item()  # 获取最小样本稀有度值
+
+    #         # 将结果保存到 param 的状态字典中
+    #         for param in param_group['params']:
+    #             self.state[param]['y_sample_size_min'] = torch.tensor(y_sample_size_min, device='cuda')  # 稀有度值放到 GPU
+    #             # self.state[param]['y_sample_size_min'] = y_sample_size_min.clone().detach().to('cuda') 
+
+    # def total_y_value(self, y):
+    #     y_classes_gruops = dict()
+    #     now_y_classes = dict()
+
+    #     y_classes_param_total = list()
+    #     now_y_classes_param = list()
+
+    #     if len(y) == 0:
+    #         raise ValueError("optimizer got an empty parameter list")
+
+    #     list_y = [i for i in y]  # 将 dtype 为 tensor 的转为 numpy 类型
+
+    #     # print("list_y:".format([i for i in list(list_y)]))
+    #       # 构造一个字典
+    #     # y_classes_gruops_list={'y_classes_gruops':{}}
+    #     # 将 'y_classes_gruops' 字典置在 网络接结构中的最顶层，目的减少 ‘y_classes_gruops'的次数
+    #     # y_classes_gruops_flage = True
+    #     for param_group in self.param_groups:
+
+    #         #print("defore_param_group:{}".format(param_group))
+    #         if isinstance(param_group,dict):
+    #             if 'y_classes_gruops' in param_group.keys():
+    #                 y_classes_gruops = param_group['y_classes_gruops'] # 获取历史batch y 类别和统计数值
+
+    #       # 获取 在 list_y 内出现的类别，并统计
+    #     for y_name in list_y:
+    #         flag = True
+
+    #         for key in now_y_classes.keys():
+                
+    #             if y_name == key:
+    #                 now_y_classes[key] = now_y_classes[key] + 1
+    #                 flag = False
+    #                 break
+    #         if flag:
+    #             now_y_classes[y_name] = 1
+
+    #     # 获取 在 list_y 内出现的类别，并和历史出现的进行统计
+    #     for y_name in list_y:
+    #         flag = True
+    #         for key in y_classes_gruops.keys():       
+    #             if y_name == key:
+    #                 y_classes_gruops[key] = y_classes_gruops[key] + 1
+    #                 flag = False
+    #                 break
+    #         if flag:
+    #             y_classes_gruops[y_name] = 1
+
+
+    #     # print("y_classes_gruops:{},now_y_classes:{}".format(y_classes_gruops, now_y_classes))
+
+    #     # now_y_classes_param 获取  在这个 batc size 内含有 y 类别的出现数量，仅含在这个 batch size 内
+    #     #  y_classes_param_total 获取 在这个 batch size 内有含有 y 类别的出现数量 ，含这个 batch size 和之前的
+
+    #     for y_name in now_y_classes.keys():
+
+    #         for key in y_classes_gruops.keys():
+    #             if y_name == key:
+    #                 now_y_classes_param.append(y_classes_gruops[key])  #将这一个batch y 类别历史统计的大小存入
+    #                 break
+
+    #     for y_name in y_classes_gruops.keys():
+
+    #         y_classes_param_total.append(y_classes_gruops[y_name]) #将所有的类别统计的大小存入
+
+
+    #     y_classes_param_total = torch.tensor(y_classes_param_total,
+    #                                          dtype=torch.float)  # 将 dtype: numpy 转变为 tensor float 类型
+    #     now_y_classes_param = torch.tensor(now_y_classes_param, dtype=torch.float)
+
+    #     y_classes_sum = y_classes_param_total.sum()  # 求类别样本和
+    #     # print("y_classes_sum:{}".format(y_classes_sum))
+
+    #     y_classes_sample_size = now_y_classes_param.div(y_classes_sum)
+
+    #     # print("y_classes_sample_size:{}".format(y_classes_sample_size))
+    #     # 计算这一个batch类别样本占比的平均值
+
+    #     y_sample_size_min = y_classes_sample_size.min(0)
+
+    #     # print("y_sample_size_min:{}".format(y_sample_size_min[0]))
+
+    #     for param_group in self.param_groups:
+    #         for param in param_group['params']:
+    #             param_state = self.state[param]
+    #             param_state['y_sample_size_min'] = torch.clone(y_sample_size_min[0].data)  # 将当前batch y 类别的最小稀有度的值加入到 模型的参数里
+              
+    #     for param_group in self.param_groups:
+
+    #         if isinstance(param_group,dict):
+    #             # if 'y_classes_gruops' in param_group.keys():
+    #             param_group['y_classes_gruops'] = y_classes_gruops
 
 
 
@@ -654,14 +667,31 @@ def get_optimizer(optimizer_name, model, lr_initial, mu=0.,momentum=args.momentu
             curi=curi
         )
 
+    # elif optimizer_name == "lm_sgd":
+    #     return  LMSGD(
+    #         [param for param in model.parameters() if param.requires_grad],
+    #         lr=lr_initial,
+    #         momentum=momentum,
+    #         weight_decay=5e-4,
+    #         curi=curi
+    #         )
     elif optimizer_name == "lm_sgd":
-        return  LMSGD(
-            [param for param in model.parameters() if param.requires_grad],
-            lr=lr_initial,
+        # 假设模型包含 model.base 和 model.fc
+        # 将全连接层 (fc) 的参数设置为 use_rare=True
+        return LMSGD(
+            [
+                # 基础层，不使用稀有度得分
+                {'params': [param for name, param in model.named_parameters() if param.requires_grad and "fc" not in name],
+                'lr': lr_initial, 'use_rare': False},
+                # 全连接层，使用稀有度得分
+                {'params': [param for name, param in model.named_parameters() if param.requires_grad and "fc" in name],
+                'lr': lr_initial*0.1 , 'use_rare': True}  # 通常全连接层可以使用更大学习率
+            ],
             momentum=momentum,
             weight_decay=5e-4,
             curi=curi
-            )
+        )
+
 
     else:
         raise NotImplementedError("Other optimizer are not implemented")

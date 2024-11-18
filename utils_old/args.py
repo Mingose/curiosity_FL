@@ -186,6 +186,12 @@ def parse_args(args_list=None):
         type=float,
         default=0.
     )
+    parser.add_argument(
+        "--curi_lr",
+        help='only use curi can be used, when fc layer*curi_lr',
+        type=float,
+        default=0.
+    )
 
     parser.add_argument(
         "--momentum",

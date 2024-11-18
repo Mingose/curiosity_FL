@@ -228,6 +228,8 @@ def get_learner(
 
         is_binary_classification = False
 
+    
+
 
 
     else:
@@ -240,7 +242,8 @@ def get_learner(
             lr_initial=initial_lr,
             mu=mu,
             momentum=momentum ,#动量
-            curi=curi #好奇
+            curi=curi ,#好奇
+            # warm_epoch=warm_epoch
         )
     lr_scheduler =\
         get_lr_scheduler(

@@ -136,7 +136,7 @@ class Learner:
 
         return loss.detach(), metric.detach()
 
-    def fit_epoch(self, iterator, weights=None):
+    def fit_epoch(self, iterator,epoch, weights=None):
         """
         将来自`iterator`的所有batches遍历一次，进行优化迭代
         :参数 iterator(torch.utils.data.DataLoader):
@@ -151,6 +151,10 @@ class Learner:
         global_loss = 0.
         global_metric = 0.
         n_samples = 0
+
+        # 更新 optimizer 的 epoch
+        if hasattr(self.optimizer, 'update_epoch'):
+            self.optimizer.update_epoch(epoch)
 
         for x, y, indices in iterator:
             x = x.to(self.device).type(torch.float32)
@@ -301,7 +305,7 @@ class Learner:
 
         """
         for step in range(n_epochs):
-            self.fit_epoch(iterator, weights)
+            self.fit_epoch(iterator,epoch=step, weights=weights)
 
             if self.lr_scheduler is not None:
                 self.lr_scheduler.step()

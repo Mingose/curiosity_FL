@@ -116,7 +116,7 @@ class LT_Dataset(Dataset):
         return sample, label, index
 
 # Load datasets
-def load_data(data_root, dataset, phase, batch_size, top_k_class=None, sampler_dic=None, num_workers=4, shuffle=True, cifar_imb_ratio=None):
+def load_data(data_root, dataset, phase, batch_size, top_k_class=None, sampler_dic=None, num_workers=8, shuffle=True, cifar_imb_ratio=None):
 
     txt_split = phase
     # txt = './label_data/all_data/%s/_%s.txt'%(dataset, dataset, txt_split)
